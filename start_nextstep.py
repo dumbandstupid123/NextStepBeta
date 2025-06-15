@@ -81,7 +81,7 @@ def start_server():
             sys.executable, '-m', 'uvicorn', 
             'app:app', 
             '--host', '0.0.0.0', 
-            '--port', '8000', 
+            '--port', '8080', 
             '--reload'
         ])
     except KeyboardInterrupt:

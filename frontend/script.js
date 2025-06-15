@@ -4,59 +4,71 @@ class NextStepApp {
         this.apiBase = '';
         this.currentCategory = null;
         this.isLoading = false;
+
+        this.currentAudio = null;
+        this.isSpeaking = false;
+        this.voiceIndicator = null;
+        this.selectedVoice = 'alloy';
+        this.currentCategory = null;
+        this.voiceTones = {
+            'professional': { voice: 'nova', description: 'Professional and clear' },
+            'friendly': { voice: 'alloy', description: 'Warm and approachable' },
+            'calm': { voice: 'shimmer', description: 'Soothing and gentle' },
+            'confident': { voice: 'onyx', description: 'Strong and assured' },
+            'conversational': { voice: 'echo', description: 'Natural and engaging' }
+        };
+        this.voiceTone = 'friendly';
+        this.audioCache = new Map();
         
         // Voice functionality
         this.isVoiceMode = false;
         this.recognition = null;
         this.synthesis = window.speechSynthesis;
-        this.isListening = false;
-        this.isSpeaking = false;
-        this.selectedVoice = null;
-        this.voiceTone = 'professional'; // Default tone
-        this.voiceTones = {
-            professional: {
-                rate: 1.0,
-                pitch: 0.9,
-                volume: 0.85,
-                preferredVoices: ['Microsoft David', 'Google US English', 'Alex', 'Daniel'],
-                description: 'Clear, authoritative, and clinical'
-            },
-            caring: {
-                rate: 0.9,
-                pitch: 1.0,
-                volume: 0.8,
-                preferredVoices: ['Microsoft Zira', 'Google US English Female', 'Samantha', 'Fiona'],
-                description: 'Warm, empathetic, and supportive'
-            },
-            calm: {
-                rate: 0.8,
-                pitch: 0.95,
-                volume: 0.75,
-                preferredVoices: ['Samantha', 'Microsoft Zira', 'Fiona', 'Moira'],
-                description: 'Slow, peaceful, and therapeutic'
-            },
-            friendly: {
-                rate: 1.1,
-                pitch: 1.1,
-                volume: 0.9,
-                preferredVoices: ['Microsoft Zira', 'Google US English Female', 'Samantha', 'Karen'],
-                description: 'Collaborative, approachable, and engaging'
-            },
-            energetic: {
-                rate: 1.2,
-                pitch: 1.15,
-                volume: 0.9,
-                preferredVoices: ['Karen', 'Google US English Female', 'Samantha', 'Microsoft Zira'],
-                description: 'Fast, motivational, and encouraging'
-            },
-            gentle: {
-                rate: 0.85,
-                pitch: 1.05,
-                volume: 0.7,
-                preferredVoices: ['Samantha', 'Fiona', 'Microsoft Zira', 'Moira'],
-                description: 'Soft, reassuring, and nurturing'
-            }
-        };
+        this.isListening = false; // Default tone
+        // this.voiceTones = {
+        //     professional: {
+        //         rate: 1.0,
+        //         pitch: 0.9,
+        //         volume: 0.85,
+        //         preferredVoices: ['Microsoft David', 'Google US English', 'Alex', 'Daniel'],
+        //         description: 'Clear, authoritative, and clinical'
+        //     },
+        //     caring: {
+        //         rate: 0.9,
+        //         pitch: 1.0,
+        //         volume: 0.8,
+        //         preferredVoices: ['Microsoft Zira', 'Google US English Female', 'Samantha', 'Fiona'],
+        //         description: 'Warm, empathetic, and supportive'
+        //     },
+        //     calm: {
+        //         rate: 0.8,
+        //         pitch: 0.95,
+        //         volume: 0.75,
+        //         preferredVoices: ['Samantha', 'Microsoft Zira', 'Fiona', 'Moira'],
+        //         description: 'Slow, peaceful, and therapeutic'
+        //     },
+        //     friendly: {
+        //         rate: 1.1,
+        //         pitch: 1.1,
+        //         volume: 0.9,
+        //         preferredVoices: ['Microsoft Zira', 'Google US English Female', 'Samantha', 'Karen'],
+        //         description: 'Collaborative, approachable, and engaging'
+        //     },
+        //     energetic: {
+        //         rate: 1.2,
+        //         pitch: 1.15,
+        //         volume: 0.9,
+        //         preferredVoices: ['Karen', 'Google US English Female', 'Samantha', 'Microsoft Zira'],
+        //         description: 'Fast, motivational, and encouraging'
+        //     },
+        //     gentle: {
+        //         rate: 0.85,
+        //         pitch: 1.05,
+        //         volume: 0.7,
+        //         preferredVoices: ['Samantha', 'Fiona', 'Microsoft Zira', 'Moira'],
+        //         description: 'Soft, reassuring, and nurturing'
+        //     }
+        // };
         
         this.initElements();
         this.setupEvents();
@@ -340,6 +352,12 @@ class NextStepApp {
             const data = await response.json();
             this.addAssistantVoiceMessage(data);
             
+            if (data.audio_url) {
+                await this.playAudioFromUrl(data.audio_url);
+            } else if (data.response) {
+                await this.speakText(data.response);
+            }
+            
         } catch (error) {
             console.error('Error sending voice message:', error);
             this.handleVoiceError('Sorry, I had trouble processing your request. Please try again.');
@@ -348,92 +366,231 @@ class NextStepApp {
         }
     }
     
-    speakText(text, onEnd = null, isRetry = false) {
-        if (!this.synthesis) {
-            console.warn('Speech synthesis not available');
+    async speakText(text, onEnd = null, isRetry = false) {
+        if (!text || text.trim() === '') {
+            console.warn('Empty text provided to speakText');
             return;
         }
         
-        if (this.isSpeaking && !isRetry) return;
+        if (this.isSpeaking && !isRetry) {
+            this.stopSpeaking();
+        }
         
-        // Stop any current speech
-        this.synthesis.cancel();
-        
-        // Wait a moment for synthesis to cancel
-        setTimeout(() => {
-            // Validate text
-            if (!text || text.trim() === '') {
-                console.warn('Empty text provided to speakText');
-                return;
-            }
+        try {
+            const cacheKey = `${text}-${this.selectedVoice}`;
+            let audioUrl = this.audioCache.get(cacheKey);
             
-            // Check if we have a valid voice
-            if (!this.selectedVoice) {
-                console.warn('No voice selected, attempting to select voice');
-                this.selectBestVoice();
-                if (!this.selectedVoice) {
-                    console.error('No voice available for speech synthesis');
-                    this.handleVoiceError('Voice not available', false); // Don't try to speak error
-                    return;
-                }
-            }
-        
-        const utterance = new SpeechSynthesisUtterance(text);
-        const toneConfig = this.voiceTones[this.voiceTone];
-        
-        utterance.voice = this.selectedVoice;
-            utterance.rate = Math.max(0.1, Math.min(2.0, toneConfig.rate)); // Clamp rate
-            utterance.pitch = Math.max(0.0, Math.min(2.0, toneConfig.pitch)); // Clamp pitch
-            utterance.volume = Math.max(0.0, Math.min(1.0, toneConfig.volume)); // Clamp volume
-        
-        utterance.onstart = () => {
-            this.isSpeaking = true;
-            this.updateVoiceStatus('speaking', `NextStep is speaking (${this.voiceTone} tone)...`);
-            this.voiceIndicator.classList.add('speaking');
-                console.log('Speech synthesis started');
-        };
-        
-        utterance.onend = () => {
-            this.isSpeaking = false;
-            this.voiceIndicator.classList.remove('speaking');
-            
-            if (this.isVoiceMode) {
-                this.updateVoiceStatus('ready', 'Tap to speak again');
-            }
-            
-            if (onEnd) onEnd();
-                console.log('Speech synthesis ended');
-        };
-        
-        utterance.onerror = (event) => {
-                console.error('Speech synthesis error:', event.error, event);
-            this.isSpeaking = false;
-            this.voiceIndicator.classList.remove('speaking');
+            if (!audioUrl) {
+                const response = await fetch('/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        voice: this.voiceTones[this.voiceTone].voice || this.selectedVoice,
+                        model: 'tts-1'
+                    })
+                });
                 
-                // Don't try to speak error messages to prevent loops
-                this.handleVoiceError(`Speech error: ${event.error}`, false);
-        };
-        
-            try {
-        this.synthesis.speak(utterance);
-                console.log('Speech utterance queued:', text.substring(0, 50) + '...');
-            } catch (error) {
-                console.error('Failed to queue speech:', error);
-                this.handleVoiceError('Failed to start speech', false);
+                if (!response.ok) {
+                    throw new Error(`TTS API error: ${response.status}`);
+                }
+                
+                const audioBlob = await response.blob();
+                audioUrl = URL.createObjectURL(audioBlob);
+                
+                if (this.audioCache.size > 50) {
+                    const firstKey = this.audioCache.keys().next().value;
+                    URL.revokeObjectURL(this.audioCache.get(firstKey));
+                    this.audioCache.delete(firstKey);
+                }
+                this.audioCache.set(cacheKey, audioUrl);
             }
-        }, isRetry ? 100 : 10); // Small delay to ensure proper cleanup
+
+            
+            await this.playAudioFromUrl(audioUrl, onEnd);
+            
+        } catch (error) {
+            console.error('Error generating speech:', error);
+            this.handleVoiceError(`Speech error: ${error.message}`, false);
+        }
+    }
+    
+    async playAudioFromUrl(audioUrl, onEnd = null) {
+        return new Promise((resolve, reject) => {
+            this.stopSpeaking();
+            
+            this.currentAudio = new Audio(audioUrl);
+            
+            this.currentAudio.onloadstart = () => {
+                this.isSpeaking = true;
+                this.updateVoiceStatus('loading', 'Loading audio...');
+                this.voiceIndicator?.classList.add('loading');
+                console.log('Audio loading started');
+            };
+            
+            this.currentAudio.oncanplay = () => {
+                this.voiceIndicator?.classList.remove('loading');
+                this.voiceIndicator?.classList.add('speaking');
+                this.updateVoiceStatus('speaking', `NextStep is speaking (${this.voiceTone} tone)...`);
+                console.log('Audio can play');
+            };
+            
+            this.currentAudio.onplay = () => {
+                this.isSpeaking = true;
+                this.voiceIndicator?.classList.add('speaking');
+                console.log('Audio playback started');
+            };
+            
+            this.currentAudio.onended = () => {
+                this.isSpeaking = false;
+                this.voiceIndicator?.classList.remove('speaking', 'loading');
+                
+                if (this.isVoiceMode) {
+                    this.updateVoiceStatus('ready', 'Tap to speak again');
+                }
+                
+                if (onEnd) onEnd();
+                console.log('Audio playback ended');
+                resolve();
+            };
+            
+            this.currentAudio.onerror = (event) => {
+                console.error('Audio playback error:', event);
+                this.isSpeaking = false;
+                this.voiceIndicator?.classList.remove('speaking', 'loading');
+                this.handleVoiceError(`Audio error: ${event.error || 'Unknown error'}`, false);
+                reject(new Error('Audio playback failed'));
+            };
+            
+            this.currentAudio.play().catch(error => {
+                console.error('Failed to play audio:', error);
+                this.handleVoiceError('Failed to play audio', false);
+                reject(error);
+            });
+        });
     }
     
     stopSpeaking() {
-        if (this.synthesis) {
-            this.synthesis.cancel();
-            this.isSpeaking = false;
-            this.voiceIndicator.classList.remove('speaking');
-            
-            if (this.isVoiceMode) {
-                this.updateVoiceStatus('ready', 'Tap to speak again');
-            }
+        if (this.currentAudio) {
+            this.currentAudio.pause();
+            this.currentAudio.currentTime = 0;
+            this.currentAudio = null;
         }
+        
+        this.isSpeaking = false;
+        this.voiceIndicator?.classList.remove('speaking', 'loading');
+        
+        if (this.isVoiceMode) {
+            this.updateVoiceStatus('ready', 'Tap to speak again');
+        }
+    }
+    
+    // Voice selection methods
+    async loadAvailableVoices() {
+        try {
+            const response = await fetch('/voices');
+            const data = await response.json();
+            return data.voices || [];
+        } catch (error) {
+            console.error('Error loading voices:', error);
+            return Object.keys(this.voiceTones).map(tone => ({
+                id: this.voiceTones[tone].voice,
+                name: tone,
+                description: this.voiceTones[tone].description
+            }));
+        }
+    }
+    
+    setVoiceTone(tone) {
+        if (this.voiceTones[tone]) {
+            this.voiceTone = tone;
+            this.selectedVoice = this.voiceTones[tone].voice;
+            console.log(`Voice tone set to: ${tone} (${this.selectedVoice})`);
+        }
+    }
+    
+    // Utility methods
+    setLoading(isLoading) {
+        // Update UI loading state
+        const loadingIndicator = document.querySelector('.loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = isLoading ? 'block' : 'none';
+        }
+    }
+    
+    updateVoiceStatus(status, message) {
+        const statusElement = document.querySelector('.voice-status');
+        if (statusElement) {
+            statusElement.textContent = message;
+            statusElement.className = `voice-status ${status}`;
+        }
+    }
+    
+    handleVoiceError(message, shouldSpeak = true) {
+        console.error('Voice error:', message);
+        this.updateVoiceStatus('error', message);
+        
+        // Show error in UI
+        const errorElement = document.querySelector('.voice-error');
+        if (errorElement) {
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
+            setTimeout(() => {
+                errorElement.style.display = 'none';
+            }, 5000);
+        }
+        
+        // Don't try to speak error messages to prevent loops
+        if (shouldSpeak && !message.includes('Speech error') && !message.includes('Audio error')) {
+            this.speakText(message);
+        }
+    }
+    
+    addAssistantVoiceMessage(data) {
+        // Add the assistant's response to the chat interface
+        const chatContainer = document.querySelector('.chat-messages');
+        if (chatContainer) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <p>${data.response}</p>
+                    ${data.top_resources.length > 0 ? `
+                        <div class="resources">
+                            <h4>Recommended Resources:</h4>
+                            <ul>
+                                ${data.top_resources.map(resource => `
+                                    <li>
+                                        <strong>${resource.name}</strong>
+                                        ${resource.address ? `<br>📍 ${resource.address}` : ''}
+                                        ${resource.phone ? `<br>📞 ${resource.phone}` : ''}
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="message-actions">
+                    <button onclick="voiceInterface.speakText('${data.response.replace(/'/g, "\\'")}')">🔊 Repeat</button>
+                    <button onclick="voiceInterface.stopSpeaking()">⏹️ Stop</button>
+                </div>
+            `;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    }
+    
+    // Cleanup method
+    cleanup() {
+        this.stopSpeaking();
+        
+        // Clean up audio cache
+        for (const [key, url] of this.audioCache.entries()) {
+            URL.revokeObjectURL(url);
+        }
+        this.audioCache.clear();
     }
     
     updateVoiceStatus(state, text) {
