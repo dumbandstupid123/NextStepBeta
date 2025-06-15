@@ -58,14 +58,14 @@ class NextStepApp {
             }
         };
         
-        this.initializeElements();
-        this.setupEventListeners();
-        this.setupVoiceRecognition();
-        this.setupTextToSpeech();
-        this.loadInitialData();
+        this.initElements();
+        this.setupEvents();
+        this.setupVoice();
+        this.setupSpeech();
+        this.loadData();
     }
     
-    initializeElements() {
+    initElements() {
         // Get DOM elements
         this.messageInput = document.getElementById('message-input');
         this.sendButton = document.getElementById('send-button');
@@ -93,7 +93,7 @@ class NextStepApp {
         this.voiceToneSelect = document.getElementById('voice-tone-select');
     }
     
-    setupEventListeners() {
+    setupEvents() {
         // Send message events
         this.sendButton.addEventListener('click', () => this.sendMessage());
         this.messageInput.addEventListener('keypress', (e) => {
@@ -138,7 +138,7 @@ class NextStepApp {
         });
     }
     
-    setupVoiceRecognition() {
+    setupVoice() {
         // Check for speech recognition support
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -175,110 +175,66 @@ class NextStepApp {
         }
     }
     
-    setupTextToSpeech() {
-        // Wait for voices to load with multiple attempts
-        this.voiceLoadAttempts = 0;
-        this.maxVoiceLoadAttempts = 10;
-        
-        this.loadVoicesWithRetry();
-    }
-    
-    loadVoicesWithRetry() {
+    setupSpeech() {
+        // Wait for voices to load
         const voices = this.synthesis.getVoices();
-        console.log(`Voice load attempt ${this.voiceLoadAttempts + 1}: Found ${voices.length} voices`);
-        
-        if (voices.length === 0 && this.voiceLoadAttempts < this.maxVoiceLoadAttempts) {
-            this.voiceLoadAttempts++;
-            
-            // Try multiple methods to load voices
-            if (this.voiceLoadAttempts === 1) {
-                // Method 1: Standard event listener
-                this.synthesis.addEventListener('voiceschanged', () => {
-                    console.log('Voices changed event fired');
-                    this.selectBestVoice();
-                });
-            }
-            
-            // Method 2: Periodic checking
-            setTimeout(() => {
-                this.loadVoicesWithRetry();
-            }, 100 * this.voiceLoadAttempts); // Increasing delay
-            
-        } else if (voices.length > 0) {
-            console.log('Voices loaded successfully, selecting best voice');
-            this.selectBestVoice();
+        if (voices.length === 0) {
+            this.synthesis.addEventListener('voiceschanged', () => {
+                console.log('Voices loaded, selecting best voice');
+                this.selectBestVoice();
+            });
         } else {
-            console.warn('No voices available after maximum attempts');
-            this.selectedVoice = null;
+            console.log('Voices already available, selecting best voice');
+            this.selectBestVoice();
         }
     }
     
     selectBestVoice() {
         const voices = this.synthesis.getVoices();
-        console.log(`Selecting from ${voices.length} available voices`);
+        console.log(`Available voices: ${voices.length}`);
         
         if (voices.length === 0) {
-            console.warn('No voices available for selection');
+            console.warn('No voices available for speech synthesis');
             this.selectedVoice = null;
             return;
         }
         
-        // Log all available voices for debugging
-        voices.forEach((voice, index) => {
-            console.log(`Voice ${index}: ${voice.name} (${voice.lang}) ${voice.localService ? '[Local]' : '[Remote]'}`);
-        });
-        
         const toneConfig = this.voiceTones[this.voiceTone];
-        let selectedVoice = null;
         
-        // Priority 1: Try preferred voices (non-local first)
+        // Try to find preferred voices for the current tone
         for (const preferredName of toneConfig.preferredVoices) {
-            selectedVoice = voices.find(v => v.name.includes(preferredName) && !v.localService);
-            if (selectedVoice) {
-                console.log(`Selected preferred remote voice: ${selectedVoice.name}`);
-                break;
+            const voice = voices.find(v => v.name.includes(preferredName) && !v.localService);
+            if (voice) {
+                this.selectedVoice = voice;
+                console.log(`Selected preferred voice: ${voice.name} for tone: ${this.voiceTone}`);
+                return;
             }
         }
         
-        // Priority 2: Try preferred voices (local)
-        if (!selectedVoice) {
-            for (const preferredName of toneConfig.preferredVoices) {
-                selectedVoice = voices.find(v => v.name.includes(preferredName));
-                if (selectedVoice) {
-                    console.log(`Selected preferred local voice: ${selectedVoice.name}`);
-                    break;
-                }
+        // Try again with local voices if no remote voices found
+        for (const preferredName of toneConfig.preferredVoices) {
+            const voice = voices.find(v => v.name.includes(preferredName));
+            if (voice) {
+                this.selectedVoice = voice;
+                console.log(`Selected preferred local voice: ${voice.name} for tone: ${this.voiceTone}`);
+                return;
             }
         }
         
-        // Priority 3: Try any English voice (non-local first)
-        if (!selectedVoice) {
-            selectedVoice = voices.find(v => v.lang.startsWith('en') && !v.localService);
-            if (selectedVoice) {
-                console.log(`Selected English remote voice: ${selectedVoice.name}`);
-            }
+        // Fallback to first English voice (prefer non-local first)
+        let fallbackVoice = voices.find(v => v.lang.startsWith('en') && !v.localService);
+        if (!fallbackVoice) {
+            fallbackVoice = voices.find(v => v.lang.startsWith('en'));
+        }
+        if (!fallbackVoice) {
+            fallbackVoice = voices[0]; // Last resort
         }
         
-        // Priority 4: Try any English voice (local)
-        if (!selectedVoice) {
-            selectedVoice = voices.find(v => v.lang.startsWith('en'));
-            if (selectedVoice) {
-                console.log(`Selected English local voice: ${selectedVoice.name}`);
-            }
-        }
-        
-        // Priority 5: Use first available voice
-        if (!selectedVoice && voices.length > 0) {
-            selectedVoice = voices[0];
-            console.log(`Using first available voice: ${selectedVoice.name}`);
-        }
-        
-        this.selectedVoice = selectedVoice;
+        this.selectedVoice = fallbackVoice;
+        console.log(`Fallback voice selected: ${this.selectedVoice?.name || 'None'} for tone: ${this.voiceTone}`);
         
         if (!this.selectedVoice) {
             console.error('Could not select any voice for speech synthesis');
-        } else {
-            console.log(`Final voice selection: ${this.selectedVoice.name} (${this.selectedVoice.lang})`);
         }
     }
     
@@ -297,7 +253,7 @@ class NextStepApp {
         }
     }
     
-    async enterVoiceMode() {
+    enterVoiceMode() {
         this.isVoiceMode = true;
         
         // Update UI
@@ -309,7 +265,7 @@ class NextStepApp {
         this.voiceToneSelector.style.display = 'flex';
         this.inputSuggestions.style.display = 'flex';
         
-        this.updateVoiceStatus('ready', 'Voice mode active - tap "Tap to Speak" to start');
+        this.updateVoiceStatus('ready', 'Voice mode active - preparing...');
         
         // Add welcome voice message with delay to ensure voice setup is complete
         setTimeout(() => {
@@ -393,167 +349,84 @@ class NextStepApp {
     }
     
     speakText(text, onEnd = null, isRetry = false) {
-        return new Promise((resolve, reject) => {
-            if (!this.synthesis) {
-                console.warn('Speech synthesis not available');
-                reject(new Error('Speech synthesis not supported'));
-                return;
-            }
-            
-            if (this.isSpeaking && !isRetry) {
-                console.log('Already speaking, ignoring new request');
-                resolve();
-                return;
-            }
-            
-            // Clean and validate text
-            const cleanText = this.cleanTextForSpeech(text);
-            if (!cleanText) {
-                console.warn('Empty or invalid text provided to speakText');
-                resolve();
-                return;
-            }
-            
-            // Stop any current speech
-            this.stopSpeaking();
-            
-            // Wait for speech to stop before starting new one
-            setTimeout(() => {
-                this.performSpeech(cleanText, onEnd, isRetry, resolve, reject);
-            }, isRetry ? 200 : 50);
-        });
-    }
-    
-    cleanTextForSpeech(text) {
-        if (!text || typeof text !== 'string') {
-            return '';
+        if (!this.synthesis) {
+            console.warn('Speech synthesis not available');
+            return;
         }
         
-        // Remove or replace problematic characters
-        let cleanText = text
-            .replace(/[^\w\s.,!?;:()\-'"/]/g, ' ') // Remove special chars except basic punctuation
-            .replace(/\s+/g, ' ') // Normalize whitespace
-            .trim();
+        if (this.isSpeaking && !isRetry) return;
         
-        // Limit length to prevent browser issues
-        if (cleanText.length > 1000) {
-            cleanText = cleanText.substring(0, 997) + '...';
-        }
+        // Stop any current speech
+        this.synthesis.cancel();
         
-        return cleanText;
-    }
-    
-    performSpeech(text, onEnd, isRetry, resolve, reject) {
-        try {
-            // Ensure we have a voice
+        // Wait a moment for synthesis to cancel
+        setTimeout(() => {
+            // Validate text
+            if (!text || text.trim() === '') {
+                console.warn('Empty text provided to speakText');
+                return;
+            }
+            
+            // Check if we have a valid voice
             if (!this.selectedVoice) {
                 console.warn('No voice selected, attempting to select voice');
                 this.selectBestVoice();
                 if (!this.selectedVoice) {
                     console.error('No voice available for speech synthesis');
-                    reject(new Error('No voice available'));
+                    this.handleVoiceError('Voice not available', false); // Don't try to speak error
                     return;
                 }
             }
-            
-            const utterance = new SpeechSynthesisUtterance(text);
-            const toneConfig = this.voiceTones[this.voiceTone];
-            
-            // Set voice and parameters with validation
-            utterance.voice = this.selectedVoice;
-            utterance.rate = this.clampValue(toneConfig.rate, 0.1, 2.0, 1.0);
-            utterance.pitch = this.clampValue(toneConfig.pitch, 0.0, 2.0, 1.0);
-            utterance.volume = this.clampValue(toneConfig.volume, 0.0, 1.0, 0.8);
-            
-            console.log(`Speech parameters - Voice: ${utterance.voice.name}, Rate: ${utterance.rate}, Pitch: ${utterance.pitch}, Volume: ${utterance.volume}`);
-            
-            // Set up event handlers
-            utterance.onstart = () => {
-                this.isSpeaking = true;
-                this.updateVoiceStatus('speaking', `NextStep is speaking (${this.voiceTone} tone)...`);
-                this.voiceIndicator.classList.add('speaking');
-                console.log('Speech synthesis started successfully');
-            };
-            
-            utterance.onend = () => {
-                this.isSpeaking = false;
-                this.voiceIndicator.classList.remove('speaking');
-                
-                if (this.isVoiceMode) {
-                    this.updateVoiceStatus('ready', 'Tap to speak again');
-                }
-                
-                console.log('Speech synthesis ended successfully');
-                if (onEnd) onEnd();
-                resolve();
-            };
-            
-            utterance.onerror = (event) => {
-                console.error('Speech synthesis error details:', {
-                    error: event.error,
-                    type: event.type,
-                    voice: utterance.voice?.name,
-                    text: text.substring(0, 50) + '...'
-                });
-                
-                this.isSpeaking = false;
-                this.voiceIndicator.classList.remove('speaking');
-                
-                // Handle specific error types
-                if (event.error === 'canceled' || event.error === 'interrupted') {
-                    console.log('Speech was cancelled or interrupted');
-                    resolve(); // Not really an error
-                    return;
-                }
-                
-                // Try recovery for other errors
-                if (!isRetry && (event.error === 'synthesis-failed' || event.error === 'voice-unavailable')) {
-                    console.log('Attempting speech recovery...');
-                    
-                    // Try to reselect voice and retry
-                    setTimeout(() => {
-                        this.selectBestVoice();
-                        this.speakText(text, onEnd, true)
-                            .then(resolve)
-                            .catch(reject);
-                    }, 500);
-                    return;
-                }
-                
-                // Final error handling
-                this.handleVoiceError(`Speech failed: ${event.error}`, false);
-                reject(new Error(`Speech synthesis failed: ${event.error}`));
-            };
-            
-            // Start speech synthesis
-            this.synthesis.speak(utterance);
-            console.log('Speech utterance queued:', text.substring(0, 50) + '...');
-            
-        } catch (error) {
-            console.error('Failed to create or queue speech:', error);
+        
+        const utterance = new SpeechSynthesisUtterance(text);
+        const toneConfig = this.voiceTones[this.voiceTone];
+        
+        utterance.voice = this.selectedVoice;
+            utterance.rate = Math.max(0.1, Math.min(2.0, toneConfig.rate)); // Clamp rate
+            utterance.pitch = Math.max(0.0, Math.min(2.0, toneConfig.pitch)); // Clamp pitch
+            utterance.volume = Math.max(0.0, Math.min(1.0, toneConfig.volume)); // Clamp volume
+        
+        utterance.onstart = () => {
+            this.isSpeaking = true;
+            this.updateVoiceStatus('speaking', `NextStep is speaking (${this.voiceTone} tone)...`);
+            this.voiceIndicator.classList.add('speaking');
+                console.log('Speech synthesis started');
+        };
+        
+        utterance.onend = () => {
             this.isSpeaking = false;
             this.voiceIndicator.classList.remove('speaking');
-            this.handleVoiceError('Failed to start speech', false);
-            reject(error);
-        }
-    }
-    
-    clampValue(value, min, max, defaultValue) {
-        if (typeof value !== 'number' || isNaN(value)) {
-            return defaultValue;
-        }
-        return Math.max(min, Math.min(max, value));
+            
+            if (this.isVoiceMode) {
+                this.updateVoiceStatus('ready', 'Tap to speak again');
+            }
+            
+            if (onEnd) onEnd();
+                console.log('Speech synthesis ended');
+        };
+        
+        utterance.onerror = (event) => {
+                console.error('Speech synthesis error:', event.error, event);
+            this.isSpeaking = false;
+            this.voiceIndicator.classList.remove('speaking');
+                
+                // Don't try to speak error messages to prevent loops
+                this.handleVoiceError(`Speech error: ${event.error}`, false);
+        };
+        
+            try {
+        this.synthesis.speak(utterance);
+                console.log('Speech utterance queued:', text.substring(0, 50) + '...');
+            } catch (error) {
+                console.error('Failed to queue speech:', error);
+                this.handleVoiceError('Failed to start speech', false);
+            }
+        }, isRetry ? 100 : 10); // Small delay to ensure proper cleanup
     }
     
     stopSpeaking() {
         if (this.synthesis) {
-            try {
-                this.synthesis.cancel();
-                console.log('Speech synthesis cancelled');
-            } catch (error) {
-                console.warn('Error cancelling speech:', error);
-            }
-            
+            this.synthesis.cancel();
             this.isSpeaking = false;
             this.voiceIndicator.classList.remove('speaking');
             
@@ -582,14 +455,7 @@ class NextStepApp {
         }
         
         if (this.selectedVoice) {
-            this.speakText(welcomeText)
-                .then(() => {
-                    console.log('Welcome message spoken successfully');
-                })
-                .catch((error) => {
-                    console.warn('Welcome message speech failed:', error);
-                    this.updateVoiceStatus('ready', 'Voice mode active - tap "Tap to Speak" to start');
-                });
+        this.speakText(welcomeText);
         } else {
             console.warn('No voice available for welcome message');
             this.updateVoiceStatus('ready', 'Voice mode active - tap "Tap to Speak" to start');
@@ -668,18 +534,8 @@ class NextStepApp {
         this.chatContainer.appendChild(messageDiv);
         this.scrollToBottom();
         
-        // Speak the response with better error handling
-        if (data.response && data.response.trim()) {
-            this.speakText(data.response)
-                .then(() => {
-                    console.log('Assistant response spoken successfully');
-                })
-                .catch((error) => {
-                    console.warn('Assistant response speech failed:', error);
-                    // Remove speaking animation if speech failed
-                    messageDiv.classList.remove('speaking-response');
-                });
-        }
+        // Speak the response
+        this.speakText(data.response);
     }
     
     handleVoiceError(errorMessage, shouldSpeak = false) {
@@ -716,7 +572,7 @@ class NextStepApp {
         this.voiceModeBtn.style.opacity = '0.5';
     }
     
-    async loadInitialData() {
+    async loadData() {
         try {
             // Check health and load categories/stats
             await Promise.all([
@@ -1002,17 +858,9 @@ class NextStepApp {
         const toneConfig = this.voiceTones[tone];
         this.updateVoiceStatus('ready', `Voice tone: ${toneConfig.description}`);
         
-        // Test the new voice tone with better error handling
+        // Test the new voice tone
         if (this.isVoiceMode) {
-            const testMessage = `Voice tone changed to ${tone}. ${toneConfig.description}.`;
-            this.speakText(testMessage)
-                .then(() => {
-                    console.log(`Voice tone test successful: ${tone}`);
-                })
-                .catch((error) => {
-                    console.warn(`Voice tone test failed: ${tone}`, error);
-                    this.updateVoiceStatus('ready', `Voice tone set to: ${toneConfig.description}`);
-                });
+            this.speakText(`Voice tone changed to ${tone}. ${toneConfig.description}.`);
         }
         
         console.log(`Voice tone changed to: ${tone}`, toneConfig);
